@@ -150,15 +150,18 @@ def formats():
             return jsonify(piped)
         return jsonify({"error": str(e)}), 400
 
-    wanted_heights = [360, 480, 720, 1080]
-    best_formats = {}
+    if not info.get("formats"):
+        return jsonify({"error": "No formats found."}), 404
 
-    for f in info.get("formats", []):
-        h = f.get("height")
-        if not h or f.get("vcodec") == "none":
-            continue
-
+    formats = []
+    for f in info["formats"]:
+        height = f.get("height")
+        ext = f.get("ext", "")
+        acodec = f.get("acodec", "")
+        vcodec = f.get("vcodec", "")
+        fps = f.get("fps", 0)
         size = f.get("filesize") or f.get("filesize_approx")
+
         if not size and f.get("url"):
             try:
                 r = requests.head(f["url"], timeout=3)
@@ -167,22 +170,24 @@ def formats():
             except Exception:
                 pass
 
-        mb = round(size / (1024 * 1024), 1) if size else None
+        size_mb = round(size / (1024 * 1024), 1) if size else None
+        label_parts = []
+        if height:
+            label_parts.append(f"{height}p")
+        if fps:
+            label_parts.append(f"{fps}fps")
+        if vcodec and vcodec != "none":
+            label_parts.append(vcodec)
+        if acodec and acodec != "none":
+            label_parts.append(acodec)
+        label_parts.append(f"{size_mb or '?'} MB")
+        label_parts.append(ext)
 
-        if h not in best_formats or (
-            f.get("ext") == "mp4" and best_formats[h]["ext"] != "mp4"
-        ) or (mb and best_formats[h].get("mb") and mb < best_formats[h]["mb"]):
-            best_formats[h] = {"id": f["format_id"], "ext": f["ext"], "mb": mb}
+        label = " | ".join(label_parts)
+        formats.append({"id": f["format_id"], "label": label})
 
-    fmts = []
-    for h in wanted_heights:
-        if h in best_formats:
-            entry = best_formats[h]
-            mb_text = f"{entry['mb']} MB" if entry.get("mb") else "Size Unknown"
-            label = f"{h}p | {mb_text} | {entry['ext']}"
-            fmts.append({"id": entry["id"], "label": label})
-
-    return jsonify({"title": info.get("title"), "formats": fmts})
+    formats = sorted(formats, key=lambda x: int(x["label"].split("p")[0]) if "p" in x["label"] else 0, reverse=True)
+    return jsonify({"title": info.get("title"), "formats": formats})
 
 
 # ---------- PLAYLIST INFO ----------
@@ -265,20 +270,6 @@ def download():
     if not url:
         return jsonify({"error": "no url"}), 400
 
-    # --- Fast direct link generation ---
-    if fmt:
-        try:
-            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
-                info = ydl.extract_info(url, download=False)
-            fmt_obj = next((f for f in info["formats"] if f["format_id"] == fmt), None)
-            if fmt_obj and "url" in fmt_obj:
-                return jsonify({
-                    "direct_url": fmt_obj["url"],
-                    "filename": info.get("title", "video")
-                })
-        except Exception as e:
-            print("Direct link generation failed:", e)
-
     tmpdir = Path(tempfile.mkdtemp(prefix="viddl_", dir=BASE_TMP))
     _inc_active()
     inc_counter()
@@ -334,7 +325,7 @@ def download():
 
             with yt_dlp.YoutubeDL(ydl_opts_video) as ydlv:
                 ydlv.download([url])
-            with yt_dlp.YoutubeDL(ydla := yt_dlp.YoutubeDL(ydl_opts_audio)):
+            with yt_dlp.YoutubeDL(ydl_opts_audio) as ydla:
                 ydla.download([url])
         else:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
