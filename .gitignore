@@ -14,3 +14,5 @@ instance/
 *.pytest_cache
 .vscode/
 .idea/
+desktop.ini
+git_backup/
