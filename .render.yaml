@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: video-downloader
+    env: python
+    plan: free
+    buildCommand: |
+      apt-get update && apt-get install -y ffmpeg
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: API_KEY
+        value: secret123

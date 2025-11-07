@@ -1,0 +1,6 @@
+Flask>=3.0
+yt-dlp
+Werkzeug>=3.0
+Flask-Limiter
+requests
+flask-cors
