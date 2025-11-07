@@ -106,7 +106,6 @@ def root():
 
 # ---------- Helper: Fallback to Piped API ----------
 def fetch_piped_info(url):
-    """Use Piped API when yt_dlp fails."""
     try:
         import re
         match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
@@ -156,7 +155,7 @@ def formats():
 
     for f in info.get("formats", []):
         h = f.get("height")
-        if not h or h not in wanted_heights or f.get("vcodec") == "none":
+        if not h or f.get("vcodec") == "none":
             continue
 
         size = f.get("filesize") or f.get("filesize_approx")
@@ -266,6 +265,20 @@ def download():
     if not url:
         return jsonify({"error": "no url"}), 400
 
+    # --- Fast direct link generation ---
+    if fmt:
+        try:
+            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
+                info = ydl.extract_info(url, download=False)
+            fmt_obj = next((f for f in info["formats"] if f["format_id"] == fmt), None)
+            if fmt_obj and "url" in fmt_obj:
+                return jsonify({
+                    "direct_url": fmt_obj["url"],
+                    "filename": info.get("title", "video")
+                })
+        except Exception as e:
+            print("Direct link generation failed:", e)
+
     tmpdir = Path(tempfile.mkdtemp(prefix="viddl_", dir=BASE_TMP))
     _inc_active()
     inc_counter()
@@ -311,7 +324,6 @@ def download():
             "cookiefile": str(COOKIE_FILE) if COOKIE_FILE.exists() else None,
         }
 
-        # --- Smart handling for large or long downloads ---
         if mode == "combined" and (is_long_video or is_large_playlist):
             ydl_opts_video = ydl_opts.copy()
             ydl_opts_audio = ydl_opts.copy()
@@ -322,28 +334,12 @@ def download():
 
             with yt_dlp.YoutubeDL(ydl_opts_video) as ydlv:
                 ydlv.download([url])
-            with yt_dlp.YoutubeDL(ydl_opts_audio) as ydla:
+            with yt_dlp.YoutubeDL(ydla := yt_dlp.YoutubeDL(ydl_opts_audio)):
                 ydla.download([url])
         else:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
-        # --- Playlist packaging ---
-        if is_playlist:
-            folder = next(tmpdir.iterdir())
-            if save_as_zip:
-                zip_path = shutil.make_archive(str(folder), "zip", folder)
-                cleanup_path(tmpdir, delay=10)
-                return send_file(zip_path, as_attachment=True, download_name=f"{folder.name}.zip")
-            else:
-                target_folder = DOWNLOAD_DIR / folder.name
-                if target_folder.exists():
-                    shutil.rmtree(target_folder)
-                shutil.move(str(folder), str(target_folder))
-                cleanup_path(tmpdir, delay=10)
-                return jsonify({"message": f"Playlist saved to: {target_folder}", "folder_path": str(target_folder)})
-
-        # --- Single file return ---
         files = list(tmpdir.glob("*"))
         if not files:
             raise RuntimeError("no file downloaded")
